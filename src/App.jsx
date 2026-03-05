@@ -12,6 +12,8 @@ import audioEngine from './lib/audioEngine';
 import sequencer from './lib/sequencer';
 import tapTempoUtil from './lib/tapTempo';
 import { PAD_INFO } from './lib/padMap';
+import { PACK_NAMES } from './lib/builtinSamples';
+import { PRESET_BEATS } from './lib/presetBeats';
 import { loadFromShareLink } from './lib/exportPattern';
 import useKeyboardSampler from './hooks/useKeyboardSampler';
 
@@ -20,9 +22,11 @@ export default function App() {
   const [activePad, setActivePad] = useState(null);
   const [currentSampleName, setCurrentSampleName] = useState('---');
   const [bpm, setBpm] = useState(120);
+  const [swing, setSwing] = useState(0);
   const [currentStep, setCurrentStep] = useState(-1);
   const [lcdMessage, setLcdMessage] = useState(null);
   const [isBooting, setIsBooting] = useState(true);
+  const [lcdMode, setLcdMode] = useState('wave'); // #18: 'wave' | 'scope'
 
   // UI state
   const [isRecording, setIsRecording] = useState(false);
@@ -37,7 +41,9 @@ export default function App() {
   const [chainMode, setChainMode] = useState(false);
   const [selectedPadForSeq, setSelectedPadForSeq] = useState(0);
   const [audioReady, setAudioReady] = useState(false);
-  const [, forceUpdate] = useState(0); // For re-render triggers
+  const [currentPack, setCurrentPack] = useState('FACTORY');
+  const [darkMode, setDarkMode] = useState(false); // #6: Night mode
+  const [, forceUpdate] = useState(0);
 
   const flashTimerRef = useRef(null);
   const pressTimerRef = useRef(null);
@@ -45,41 +51,50 @@ export default function App() {
 
   // ─── Boot Sequence ───
   useEffect(() => {
-    const bootTimer = setTimeout(() => {
-      setLcdMessage('SOUNDCULATOR v1.0');
-    }, 300);
+    setTimeout(() => setLcdMessage('SOUNDCULATOR v2.0'), 300);
+    setTimeout(() => setLcdMessage('READY'), 1500);
+    setTimeout(() => { setIsBooting(false); setLcdMessage(null); }, 2200);
 
-    const readyTimer = setTimeout(() => {
-      setLcdMessage('READY');
-    }, 1500);
+    // #20: Load persisted patterns
+    const loaded = sequencer.loadFromStorage();
+    if (loaded) {
+      setBpm(sequencer.bpm);
+      setSwing(sequencer.swing);
+      setCurrentPattern(sequencer.currentPattern);
+    }
 
-    const finalTimer = setTimeout(() => {
-      setIsBooting(false);
-      setLcdMessage(null);
-    }, 2200);
-
-    return () => {
-      clearTimeout(bootTimer);
-      clearTimeout(readyTimer);
-      clearTimeout(finalTimer);
-    };
+    // #6: Load dark mode pref
+    const dm = localStorage.getItem('soundculator-darkmode');
+    if (dm === 'true') setDarkMode(true);
   }, []);
 
-  // ─── Share Link Import ───
+  // #6: Apply dark mode class
+  useEffect(() => {
+    document.body.classList.toggle('dark-mode', darkMode);
+    localStorage.setItem('soundculator-darkmode', darkMode);
+  }, [darkMode]);
+
+  // Share link import
   useEffect(() => {
     const loaded = loadFromShareLink();
     if (loaded) {
       setBpm(sequencer.bpm);
+      setSwing(sequencer.swing);
       setLcdMessage('PATTERN LOADED');
       setTimeout(() => setLcdMessage(null), 2000);
     }
   }, []);
 
-  // ─── Initialize Audio on first interaction ───
+  // ─── Init Audio ───
   const initAudio = useCallback(async () => {
     if (audioReady) return;
     try {
       await audioEngine.init();
+      // #4: Connect sequencer to Web Audio context
+      sequencer.setAudioContext(audioEngine.ctx);
+      sequencer.setSchedulePad((pad, when, vel) => {
+        audioEngine.schedulePad(pad, when, vel);
+      });
       setAudioReady(true);
     } catch (e) {
       console.error('Audio init failed:', e);
@@ -88,34 +103,26 @@ export default function App() {
 
   // ─── Sequencer Callbacks ───
   useEffect(() => {
-    sequencer.setOnStep((step) => {
-      setCurrentStep(step);
-    });
-
+    sequencer.setOnStep((step) => setCurrentStep(step));
     sequencer.setOnPatternChange((pattern) => {
       setCurrentPattern(pattern);
       const labels = ['A', 'B', 'C', 'D'];
       setLcdMessage(`PATTERN ${labels[pattern]}`);
       setTimeout(() => setLcdMessage(null), 800);
     });
-
-    sequencer.setTriggerPad((padNum) => {
-      audioEngine.triggerPad(padNum);
+    sequencer.setTriggerPad((padNum, velocity) => {
+      audioEngine.triggerPad(padNum, velocity);
       flashPad(padNum);
     });
   }, []);
 
-  // ─── Flash pad briefly ───
+  // ─── Flash pad ───
   const flashPad = useCallback((padNum) => {
     setActivePad(padNum);
     const padInfo = PAD_INFO.find(p => p.pad === padNum);
-    if (padInfo) {
-      setCurrentSampleName(audioEngine.customNames.get(padNum) || padInfo.sampleName);
-    }
+    if (padInfo) setCurrentSampleName(audioEngine.customNames.get(padNum) || padInfo.sampleName);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-    flashTimerRef.current = setTimeout(() => {
-      setActivePad(null);
-    }, 120);
+    flashTimerRef.current = setTimeout(() => setActivePad(null), 120);
   }, []);
 
   // ─── Trigger Pad ───
@@ -123,11 +130,10 @@ export default function App() {
     await initAudio();
     audioEngine.triggerPad(padNumber);
     flashPad(padNumber);
+    setSelectedPadForSeq(padNumber);
 
-    // Record to sequencer if recording
     if (sequencer.recording && sequencer.playing) {
       sequencer.recordPad(padNumber);
-      setSelectedPadForSeq(padNumber);
       forceUpdate(v => v + 1);
     }
   }, [initAudio, flashPad]);
@@ -143,6 +149,7 @@ export default function App() {
 
   const handleStop = useCallback(() => {
     sequencer.stop();
+    audioEngine.stopAll();
     setIsPlaying(false);
     setCurrentStep(-1);
     setLcdMessage('■ STOP');
@@ -159,11 +166,7 @@ export default function App() {
 
   const handleClear = useCallback(() => {
     audioEngine.stopAll();
-    if (isPlaying) {
-      sequencer.stop();
-      setIsPlaying(false);
-      setCurrentStep(-1);
-    }
+    if (isPlaying) { sequencer.stop(); setIsPlaying(false); setCurrentStep(-1); }
     setIsRecording(false);
     sequencer.recording = false;
     setLcdMessage('CLEAR');
@@ -181,65 +184,46 @@ export default function App() {
     }
   }, [initAudio]);
 
-  const handleLegend = useCallback(() => {
-    setShowLegend(v => !v);
-  }, []);
+  const handleLegend = useCallback(() => setShowLegend(v => !v), []);
 
-  // ─── Long press pad → popover ───
+  // ─── Long press ───
   const handleLongPressPad = useCallback((padNumber) => {
     const el = document.getElementById(`key-pad-${padNumber}`);
     const rect = el?.getBoundingClientRect();
     setPopoverPad(padNumber);
-    setPopoverPos({
-      x: rect ? rect.left : 100,
-      y: rect ? rect.bottom + 8 : 200,
-    });
+    setPopoverPos({ x: rect ? rect.left : 100, y: rect ? rect.bottom + 8 : 200 });
   }, []);
 
-  // ─── Long press ± → FX panel ───
-  const handleLongPressFx = useCallback(() => {
-    setShowFX(v => !v);
-  }, []);
+  const handleLongPressFx = useCallback(() => setShowFX(v => !v), []);
 
-  // ─── Keyboard pressed visual sync ───
+  // ─── Keyboard visual sync ───
   const setPressed = useCallback((key) => {
     setPressedKey(key);
     if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
     if (key !== null) {
-      pressTimerRef.current = setTimeout(() => {
-        setPressedKey(null);
-      }, 150);
+      pressTimerRef.current = setTimeout(() => setPressedKey(null), 150);
     }
   }, []);
 
-  // ─── Sequencer step toggle for selected pad ───
-  const handleToggleStep = useCallback((stepIndex) => {
-    sequencer.toggleStep(selectedPadForSeq, stepIndex);
+  // ─── Sequencer toggles ───
+  const handleToggleStep = useCallback((stepIndex, overridePad) => {
+    const pad = overridePad ?? selectedPadForSeq;
+    sequencer.toggleStep(pad, stepIndex);
     forceUpdate(v => v + 1);
   }, [selectedPadForSeq]);
-
-  const isStepActive = useCallback((stepIndex) => {
-    return sequencer.isStepActive(selectedPadForSeq, stepIndex);
-  }, [selectedPadForSeq]);
-
-  const hasActiveStepsAtIndex = useCallback((stepIndex) => {
-    return sequencer.hasActiveStepsAtIndex(stepIndex);
-  }, []);
 
   // ─── Pattern controls ───
   const handleSwitchPattern = useCallback((index) => {
     sequencer.switchPattern(index);
     setCurrentPattern(index);
-    const labels = ['A', 'B', 'C', 'D'];
-    setLcdMessage(`PATTERN ${labels[index]}`);
+    setLcdMessage(`PATTERN ${['A', 'B', 'C', 'D'][index]}`);
     setTimeout(() => setLcdMessage(null), 600);
     forceUpdate(v => v + 1);
   }, []);
 
   const handleCopyPattern = useCallback((targetIndex) => {
     sequencer.copyPatternTo(targetIndex);
-    const labels = ['A', 'B', 'C', 'D'];
-    setLcdMessage(`COPY → ${labels[targetIndex]}`);
+    setLcdMessage(`COPY → ${['A', 'B', 'C', 'D'][targetIndex]}`);
     setTimeout(() => setLcdMessage(null), 600);
   }, []);
 
@@ -248,6 +232,67 @@ export default function App() {
     setChainMode(chain);
     setLcdMessage(chain ? 'CHAIN ON' : 'CHAIN OFF');
     setTimeout(() => setLcdMessage(null), 600);
+  }, []);
+
+  // #2: Swing
+  const handleSwingChange = useCallback((val) => {
+    setSwing(val);
+    sequencer.setSwing(val);
+  }, []);
+
+  // #5: Load preset beat
+  const handleLoadPreset = useCallback((index) => {
+    const preset = PRESET_BEATS[index];
+    if (!preset) return;
+
+    sequencer.clearPattern();
+    Object.entries(preset.pattern).forEach(([pad, steps]) => {
+      sequencer.activeSteps.set(Number(pad), [...steps]);
+    });
+    sequencer.setBPM(preset.bpm);
+    sequencer.setSwing(preset.swing);
+    setBpm(preset.bpm);
+    setSwing(preset.swing);
+    setLcdMessage(`♫ ${preset.name}`);
+    setTimeout(() => setLcdMessage(null), 1200);
+    forceUpdate(v => v + 1);
+  }, []);
+
+  // #15: Switch sample pack
+  const handleSwitchPack = useCallback(async (packName) => {
+    await initAudio();
+    audioEngine.switchPack(packName);
+    setCurrentPack(packName);
+    setLcdMessage(`PACK: ${packName}`);
+    setTimeout(() => setLcdMessage(null), 800);
+  }, [initAudio]);
+
+  // #12: Undo/Redo keyboard shortcuts
+  useEffect(() => {
+    const handleKeyCombo = (e) => {
+      if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (sequencer.undo()) {
+          setLcdMessage('UNDO');
+          setTimeout(() => setLcdMessage(null), 600);
+          forceUpdate(v => v + 1);
+        }
+      } else if ((e.ctrlKey && e.key === 'z' && e.shiftKey) || (e.ctrlKey && e.key === 'y')) {
+        e.preventDefault();
+        if (sequencer.redo()) {
+          setLcdMessage('REDO');
+          setTimeout(() => setLcdMessage(null), 600);
+          forceUpdate(v => v + 1);
+        }
+      }
+      // #18: Toggle LCD scope mode
+      else if (e.key === 'F2') {
+        e.preventDefault();
+        setLcdMode(m => m === 'wave' ? 'scope' : 'wave');
+      }
+    };
+    window.addEventListener('keydown', handleKeyCombo);
+    return () => window.removeEventListener('keydown', handleKeyCombo);
   }, []);
 
   // ─── Keyboard Hook ───
@@ -269,43 +314,59 @@ export default function App() {
       longPressTimerRef.current = null;
     }, 500);
   }, []);
-
   const handleBrandPointerUp = useCallback(() => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-    }
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
   }, []);
 
   return (
     <>
-      {/* Calculator Body */}
-      <div
-        className="calc-body"
-        onClick={initAudio}
-        role="application"
-        aria-label="Soundculator - Music Sampler Calculator"
-      >
+      <div className="calc-body" onClick={initAudio}
+        role="application" aria-label="Soundculator - Music Sampler Calculator">
         {/* Brand Strip */}
-        <div
-          className="brand-strip"
+        <div className="brand-strip"
           onPointerDown={handleBrandPointerDown}
           onPointerUp={handleBrandPointerUp}
-          onPointerLeave={handleBrandPointerUp}
-        >
+          onPointerLeave={handleBrandPointerUp}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <span className="brand-dot" />
             <span className="brand-name">SOUNDCULATOR</span>
           </div>
-          <button
-            className="brand-help"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleLegend();
-            }}
-            aria-label="Open keyboard shortcuts (F1)"
-          >
-            ?
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {/* #15: Sample pack switcher */}
+            <select
+              className="pack-select"
+              value={currentPack}
+              onChange={(e) => {
+                e.stopPropagation();
+                handleSwitchPack(e.target.value);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              aria-label="Select sample pack"
+            >
+              {PACK_NAMES.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+
+            {/* #6: Dark mode toggle */}
+            <button
+              className="brand-help"
+              onClick={(e) => { e.stopPropagation(); setDarkMode(v => !v); }}
+              aria-label="Toggle dark mode"
+              title="Night mode"
+            >
+              {darkMode ? '☀' : '🌙'}
+            </button>
+
+            {/* Legend */}
+            <button
+              className="brand-help"
+              onClick={(e) => { e.stopPropagation(); handleLegend(); }}
+              aria-label="Open keyboard shortcuts (F1)"
+            >
+              ?
+            </button>
+          </div>
         </div>
 
         {/* LCD Display */}
@@ -314,9 +375,11 @@ export default function App() {
           sampleName={currentSampleName}
           bpm={bpm}
           currentStep={currentStep}
-          sequencerSteps={hasActiveStepsAtIndex}
+          sequencerSteps={(i) => sequencer.hasActiveStepsAtIndex(i)}
           isBooting={isBooting}
           lcdMessage={lcdMessage}
+          audioEngine={audioReady ? audioEngine : null}
+          lcdMode={lcdMode}
         />
 
         {/* Calculator Keys */}
@@ -336,26 +399,28 @@ export default function App() {
         />
       </div>
 
-      {/* Sequencer Panel (below calculator) */}
+      {/* Sequencer Panel */}
       <SequencerPanel
         steps={16}
         currentStep={currentStep}
-        activeSteps={hasActiveStepsAtIndex}
-        isStepActive={isStepActive}
+        sequencer={sequencer}
         onToggleStep={handleToggleStep}
         currentPattern={currentPattern}
         onSwitchPattern={handleSwitchPattern}
         onCopyPattern={handleCopyPattern}
         chainMode={chainMode}
         onToggleChain={handleToggleChain}
+        selectedPad={selectedPadForSeq}
+        onSelectPad={setSelectedPadForSeq}
+        swing={swing}
+        onSwingChange={handleSwingChange}
+        onLoadPreset={handleLoadPreset}
+        presetNames={PRESET_BEATS.map(p => p.name)}
+        forceRender={forceUpdate}
       />
 
       {/* FX Panel */}
-      <FXPanel
-        audioEngine={audioEngine}
-        isOpen={showFX}
-        onClose={() => setShowFX(false)}
-      />
+      <FXPanel audioEngine={audioEngine} isOpen={showFX} onClose={() => setShowFX(false)} />
 
       {/* Legend Modal */}
       {showLegend && <LegendModal onClose={() => setShowLegend(false)} />}
@@ -372,9 +437,11 @@ export default function App() {
           audioEngine={audioEngine}
           onImportPattern={() => {
             setBpm(sequencer.bpm);
+            setSwing(sequencer.swing);
             setCurrentPattern(sequencer.currentPattern);
             forceUpdate(v => v + 1);
           }}
+          sequencer={sequencer}
         />
       )}
 

@@ -7,10 +7,12 @@ export default function SampleLibrary({
     onLoadSample,
     audioEngine,
     onImportPattern,
+    sequencer,
 }) {
     const [dragOver, setDragOver] = useState(false);
     const [assignTarget, setAssignTarget] = useState(null);
     const [message, setMessage] = useState('');
+    const [exporting, setExporting] = useState(false);
     const fileInputRef = useRef(null);
     const jsonInputRef = useRef(null);
 
@@ -25,16 +27,14 @@ export default function SampleLibrary({
         for (const slot of customSlots) {
             if (!audioEngine.hasSample(slot)) return slot;
         }
-        return customSlots[0]; // Overwrite first if all full
+        return customSlots[0];
     };
 
     const handleFile = useCallback(async (file, targetPad) => {
         if (!file) return;
-        const validTypes = ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/aiff', 'audio/mp3', 'audio/x-wav', 'audio/x-aiff'];
         const ext = file.name.split('.').pop().toLowerCase();
         const validExts = ['wav', 'mp3', 'ogg', 'aiff'];
-
-        if (!validTypes.includes(file.type) && !validExts.includes(ext)) {
+        if (!validExts.includes(ext)) {
             showMessage('Invalid file type');
             return;
         }
@@ -47,10 +47,9 @@ export default function SampleLibrary({
         try {
             const reader = new FileReader();
             reader.onload = () => {
-                const base64 = reader.result;
                 sessionStorage.setItem(`soundculator-sample-${pad}`, JSON.stringify({
                     name: file.name,
-                    data: base64,
+                    data: reader.result,
                 }));
             };
             reader.readAsDataURL(file);
@@ -68,11 +67,7 @@ export default function SampleLibrary({
         setAssignTarget(null);
     }, [handleFile, assignTarget]);
 
-    const handleDragOver = (e) => {
-        e.preventDefault();
-        setDragOver(true);
-    };
-
+    const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
     const handleDragLeave = () => setDragOver(false);
 
     const handleFileInput = (e) => {
@@ -94,6 +89,42 @@ export default function SampleLibrary({
         reader.readAsText(file);
         e.target.value = '';
     };
+
+    // #9: Export pattern as WAV
+    const handleWAVExport = useCallback(async () => {
+        if (!sequencer || !audioEngine) return;
+        setExporting(true);
+        showMessage('RENDERING WAV...');
+
+        try {
+            const patternData = {};
+            for (const [pad, steps] of sequencer.activeSteps) {
+                const mapped = steps.map(s => {
+                    if (s === false) return false;
+                    if (s === true) return 1.0;
+                    return s;
+                });
+                patternData[pad] = mapped;
+            }
+
+            const blob = await audioEngine.renderPatternToWAV(patternData, sequencer.bpm, 2);
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Soundculator-${new Date().toISOString().slice(0, 10)}.wav`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showMessage('WAV EXPORTED ✓');
+        } catch (e) {
+            console.error('WAV export failed:', e);
+            showMessage('EXPORT FAILED');
+        }
+        setExporting(false);
+    }, [sequencer, audioEngine]);
 
     return (
         <>
@@ -148,10 +179,7 @@ export default function SampleLibrary({
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    onClick={() => {
-                        setAssignTarget(null);
-                        fileInputRef.current?.click();
-                    }}
+                    onClick={() => { setAssignTarget(null); fileInputRef.current?.click(); }}
                     role="button"
                     aria-label="Drop audio file here or click to browse"
                 >
@@ -159,28 +187,19 @@ export default function SampleLibrary({
                     <span style={{ fontSize: '12px', opacity: 0.7 }}>.wav .mp3 .ogg .aiff</span>
                 </div>
 
-                <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".wav,.mp3,.ogg,.aiff"
-                    style={{ display: 'none' }}
-                    onChange={handleFileInput}
-                />
+                <input ref={fileInputRef} type="file" accept=".wav,.mp3,.ogg,.aiff"
+                    style={{ display: 'none' }} onChange={handleFileInput} />
 
                 {/* Export/Import section */}
                 <div className="export-section">
                     <button className="export-btn" onClick={() => {
                         copyToClipboard(exportPatternJSON());
                         showMessage('COPIED TO CLIPBOARD');
-                    }}>
-                        COPY JSON
-                    </button>
+                    }}>COPY JSON</button>
                     <button className="export-btn" onClick={() => {
                         downloadJSON();
                         showMessage('DOWNLOADED');
-                    }}>
-                        DOWNLOAD
-                    </button>
+                    }}>DOWNLOAD</button>
                     <button className="export-btn" onClick={() => jsonInputRef.current?.click()}>
                         LOAD JSON
                     </button>
@@ -188,26 +207,25 @@ export default function SampleLibrary({
                         const link = generateShareLink();
                         copyToClipboard(link);
                         showMessage('SHARE LINK COPIED');
-                    }}>
-                        SHARE LINK
+                    }}>SHARE LINK</button>
+
+                    {/* #9: WAV Export */}
+                    <button
+                        className="export-btn export-wav"
+                        onClick={handleWAVExport}
+                        disabled={exporting}
+                    >
+                        {exporting ? 'RENDERING...' : '🎵 EXPORT WAV'}
                     </button>
                 </div>
 
-                <input
-                    ref={jsonInputRef}
-                    type="file"
-                    accept=".json"
-                    style={{ display: 'none' }}
-                    onChange={handleJsonImport}
-                />
+                <input ref={jsonInputRef} type="file" accept=".json"
+                    style={{ display: 'none' }} onChange={handleJsonImport} />
 
                 <div style={{
-                    textAlign: 'center',
-                    marginTop: '10px',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '11px',
-                    color: 'var(--shadow)',
-                    opacity: 0.7,
+                    textAlign: 'center', marginTop: '10px',
+                    fontFamily: "'VT323', monospace", fontSize: '11px',
+                    color: 'var(--shadow)', opacity: 0.7,
                 }}>
                     ⚠ Custom samples are session-only
                 </div>
