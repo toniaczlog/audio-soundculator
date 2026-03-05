@@ -1,0 +1,16 @@
+{
+    "name": "Soundculator",
+    "short_name": "Soundculator",
+    "description": "A retro pocket calculator that's secretly a music sampler",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#1a1a1a",
+    "theme_color": "#e8e0c8",
+    "icons": [
+        {
+            "src": "/calculator.svg",
+            "sizes": "any",
+            "type": "image/svg+xml"
+        }
+    ]
+}
