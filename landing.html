@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Soundculator — Music Sampler Disguised as a Calculator</title>
+    <meta name="description"
+        content="A vintage 1970s pocket calculator that's secretly a fully functional music sampler and drum machine. Built with React + Web Audio API." />
+    <meta name="theme-color" content="#1a1812" />
+    <link rel="icon" href="public/calculator.svg" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=VT323&family=Inter:wght@300;400;600;700&display=swap"
+        rel="stylesheet" />
+    <style>
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0c0b0a;
+            --surface: #1a1812;
+            --surface-light: #2a2820;
+            --cream: #e8e0c8;
+            --gold: #c9a84c;
+            --gold-dim: #8b6914;
+            --text: #f0ebd6;
+            --text-dim: #8a7a5a;
+            --red: #cc2200;
+            --blue: #1a4a8b;
+            --green: #c8d4a0;
+        }
+
+        html {
+            font-size: 16px;
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* ═══ Background ═══ */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse at 30% 20%, rgba(139, 105, 20, 0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 80%, rgba(26, 74, 139, 0.06) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ═══ Header / Hero ═══ */
+        .hero {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 80px 24px 60px;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            font-family: 'VT323', monospace;
+            font-size: 13px;
+            color: var(--gold);
+            border: 1px solid var(--gold-dim);
+            border-radius: 20px;
+            padding: 4px 16px;
+            letter-spacing: 2px;
+            margin-bottom: 20px;
+            background: rgba(139, 105, 20, 0.08);
+        }
+
+        .hero h1 {
+            font-family: 'Space Mono', monospace;
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--cream) 0%, var(--gold) 50%, var(--cream) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.1;
+            margin-bottom: 16px;
+            letter-spacing: -1px;
+        }
+
+        .hero h1 .accent {
+            -webkit-text-fill-color: var(--red);
+        }
+
+        .hero p {
+            font-size: 1.15rem;
+            color: var(--text-dim);
+            max-width: 540px;
+            margin: 0 auto 32px;
+            font-weight: 300;
+        }
+
+        .hero-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Space Mono', monospace;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            text-decoration: none;
+            color: var(--bg);
+            background: linear-gradient(135deg, var(--gold) 0%, #e0c060 100%);
+            padding: 14px 32px;
+            border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(139, 105, 20, 0.3), 0 0 0 1px rgba(201, 168, 76, 0.3);
+            transition: all 0.2s;
+        }
+
+        .hero-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(139, 105, 20, 0.4), 0 0 0 1px rgba(201, 168, 76, 0.5);
+        }
+
+        .hero-cta .arrow {
+            font-size: 18px;
+            transition: transform 0.2s;
+        }
+
+        .hero-cta:hover .arrow {
+            transform: translateX(4px);
+        }
+
+        .hero-secondary {
+            display: inline-block;
+            font-family: 'VT323', monospace;
+            font-size: 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            margin-left: 16px;
+            letter-spacing: 1px;
+            border-bottom: 1px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .hero-secondary:hover {
+            color: var(--text);
+            border-color: var(--text-dim);
+        }
+
+        /* ═══ Screenshots Gallery ═══ */
+        .gallery {
+            position: relative;
+            z-index: 1;
+            padding: 0 24px 80px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 0.6fr;
+            gap: 16px;
+            align-items: start;
+        }
+
+        @media (max-width: 768px) {
+            .gallery-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+        }
+
+        .gallery-card {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .gallery-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+        }
+
+        .gallery-card img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .gallery-card .card-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 12px 16px;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+            font-family: 'VT323', monospace;
+            font-size: 14px;
+            color: var(--green);
+            letter-spacing: 2px;
+        }
+
+        /* ═══ Features ═══ */
+        .features {
+            position: relative;
+            z-index: 1;
+            padding: 60px 24px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .features h2 {
+            font-family: 'Space Mono', monospace;
+            font-size: 1.8rem;
+            color: var(--cream);
+            text-align: center;
+            margin-bottom: 40px;
+            letter-spacing: -0.5px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .feature-card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 20px;
+            transition: border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            border-color: rgba(201, 168, 76, 0.2);
+        }
+
+        .feature-card .f-icon {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .feature-card h3 {
+            font-family: 'Space Mono', monospace;
+            font-size: 14px;
+            color: var(--cream);
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .feature-card p {
+            font-size: 13px;
+            color: var(--text-dim);
+            line-height: 1.5;
+        }
+
+        /* ═══ Keyboard Map ═══ */
+        .keyboard-section {
+            position: relative;
+            z-index: 1;
+            padding: 60px 24px;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .keyboard-section h2 {
+            font-family: 'Space Mono', monospace;
+            font-size: 1.4rem;
+            color: var(--cream);
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .key-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'VT323', monospace;
+            font-size: 15px;
+        }
+
+        .key-table th {
+            text-align: left;
+            padding: 8px 12px;
+            color: var(--gold);
+            border-bottom: 1px solid var(--surface-light);
+            letter-spacing: 2px;
+            font-size: 12px;
+        }
+
+        .key-table td {
+            padding: 6px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            color: var(--text-dim);
+        }
+
+        .key-table td:first-child {
+            color: var(--cream);
+        }
+
+        .kbd {
+            display: inline-block;
+            font-family: 'Space Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            background: #2d2416;
+            color: var(--cream);
+            padding: 3px 8px;
+            border-radius: 3px;
+            box-shadow: 0 2px 0 #1a1208;
+            min-width: 28px;
+            text-align: center;
+        }
+
+        .kbd.red {
+            background: #8b1a00;
+            color: #ffd4c4;
+        }
+
+        .kbd.blue {
+            background: var(--blue);
+            color: #c4d4ff;
+        }
+
+        .kbd.amber {
+            background: var(--gold-dim);
+            color: #fff4d4;
+        }
+
+        /* ═══ Tech ═══ */
+        .tech-section {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 60px 24px;
+        }
+
+        .tech-pills {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .tech-pill {
+            font-family: 'VT323', monospace;
+            font-size: 13px;
+            color: var(--text-dim);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            padding: 6px 16px;
+            letter-spacing: 1px;
+        }
+
+        /* ═══ Footer ═══ */
+        footer {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 40px 24px;
+            font-family: 'VT323', monospace;
+            font-size: 14px;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+        }
+
+        footer a {
+            color: var(--gold);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* ═══ Separator ═══ */
+        .sep {
+            width: 60px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
+            margin: 0 auto;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ═══ Hero ═══ -->
+    <section class="hero">
+        <div class="hero-badge">♫ MUSIC × CALCULATOR</div>
+        <h1>SOUND<span class="accent">CULATOR</span></h1>
+        <p>A vintage 1970s pocket calculator that's secretly a fully functional music sampler &amp; drum machine. 19
+            pads, 4 sample packs, 16-step sequencer — all in your browser.</p>
+        <a href="app.html" class="hero-cta">LAUNCH APP <span class="arrow">→</span></a>
+        <a href="https://github.com/toniaczlog/audio-soundculator" class="hero-secondary" target="_blank">VIEW ON GITHUB
+            ↗</a>
+    </section>
+
+    <!-- ═══ Screenshots ═══ -->
+    <section class="gallery">
+        <div class="gallery-grid">
+            <div class="gallery-card">
+                <img src="screenshots/desktop-light.png" alt="Soundculator desktop light mode" loading="lazy" />
+                <div class="card-label">DESKTOP — LIGHT MODE</div>
+            </div>
+            <div class="gallery-card">
+                <img src="screenshots/dark-mode.png" alt="Soundculator dark mode" loading="lazy" />
+                <div class="card-label">NIGHT MODE</div>
+            </div>
+            <div class="gallery-card">
+                <img src="screenshots/mobile.png" alt="Soundculator mobile view" loading="lazy" />
+                <div class="card-label">MOBILE</div>
+            </div>
+        </div>
+    </section>
+
+    <div class="sep"></div>
+
+    <!-- ═══ Features ═══ -->
+    <section class="features">
+        <h2>What's Inside</h2>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="f-icon">🥁</div>
+                <h3>19 Sample Pads</h3>
+                <p>14 built-in sounds synthesized via Web Audio API — kicks, snares, hats, claps, toms, synths, bells,
+                    vinyl crackle, sub boom, and FX glitch.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">🎛️</div>
+                <h3>16-Step Sequencer</h3>
+                <p>Program beats step by step with ghost/normal/accent velocity, swing control up to 75%, and
+                    record-in-place by tapping pads live.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">📦</div>
+                <h3>4 Sample Packs</h3>
+                <p>Switch between Factory, LoFi, 808, and Electro packs on the fly. Each pack has unique drum sounds and
+                    synth tones.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">♫</div>
+                <h3>12 Preset Beats</h3>
+                <p>Boom Bap, Trap 808, House, Techno, D&amp;B, Lo-Fi, Disco, Reggaeton, Bossa, Ambient, Afrobeat — load
+                    instantly with one click.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">🌙</div>
+                <h3>Night Mode</h3>
+                <p>Toggle between vintage cream light mode and a slick dark theme with cyan LCD accents and magenta
+                    keys.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">🎹</div>
+                <h3>MIDI + Keyboard</h3>
+                <p>Full physical keyboard mapping plus automatic MIDI controller detection. Plug in your Akai or
+                    Novation and play.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">📊</div>
+                <h3>Live Waveform LCD</h3>
+                <p>Real-time AnalyserNode waveform on the LCD display. Press F2 to toggle between ASCII and canvas
+                    oscilloscope mode.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">🎵</div>
+                <h3>WAV Export</h3>
+                <p>Render your beat to a WAV file using OfflineAudioContext. Download and use in your DAW.</p>
+            </div>
+            <div class="feature-card">
+                <div class="f-icon">💾</div>
+                <h3>Auto-Save Patterns</h3>
+                <p>Patterns persist to localStorage automatically. Share via JSON, clipboard, download, or URL share
+                    links.</p>
+            </div>
+        </div>
+    </section>
+
+    <div class="sep"></div>
+
+    <!-- ═══ Keyboard Shortcuts ═══ -->
+    <section class="keyboard-section">
+        <h2>⌨ Keyboard Shortcuts</h2>
+        <table class="key-table">
+            <thead>
+                <tr>
+                    <th>KEY</th>
+                    <th>ACTION</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><span class="kbd">0</span>–<span class="kbd">9</span></td>
+                    <td>Trigger PADs 0–9 (drums + synths)</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd red">/</span> <span class="kbd red">*</span> <span class="kbd red">-</span>
+                        <span class="kbd red">+</span>
+                    </td>
+                    <td>PADs 10–13 (chord, bell, vinyl, sub)</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd">m</span> <span class="kbd">r</span> <span class="kbd">p</span> <span
+                            class="kbd">n</span></td>
+                    <td>Custom slots A–D</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd blue">Enter</span></td>
+                    <td>▶ Play sequencer</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd blue">Esc</span></td>
+                    <td>■ Stop sequencer</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd blue">Tab</span></td>
+                    <td>● Toggle record mode</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd amber">c</span></td>
+                    <td>Clear / panic stop</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd">t</span></td>
+                    <td>Tap tempo</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd">Ctrl+Z</span></td>
+                    <td>Undo pattern edit</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd">F1</span></td>
+                    <td>Keyboard legend</td>
+                </tr>
+                <tr>
+                    <td><span class="kbd">F2</span></td>
+                    <td>Toggle LCD oscilloscope</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <div class="sep"></div>
+
+    <!-- ═══ Tech ═══ -->
+    <section class="tech-section">
+        <h2 style="font-family:'Space Mono',monospace; font-size:1.4rem; color:var(--cream); margin-bottom:8px;">Built
+            With</h2>
+        <div class="tech-pills">
+            <span class="tech-pill">REACT 18</span>
+            <span class="tech-pill">VITE</span>
+            <span class="tech-pill">WEB AUDIO API</span>
+            <span class="tech-pill">PWA</span>
+            <span class="tech-pill">NO BACKEND</span>
+            <span class="tech-pill">MIDI API</span>
+        </div>
+    </section>
+
+    <!-- ═══ Footer ═══ -->
+    <footer>
+        <p>SOUNDCULATOR v2.0 — Made with ♫</p>
+        <p style="margin-top:8px;">
+            <a href="https://github.com/toniaczlog/audio-soundculator" target="_blank">GitHub</a> ·
+            <a href="app.html">Launch App</a>
+        </p>
+    </footer>
+
+</body>
+
+</html>
